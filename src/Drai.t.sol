@@ -18,4 +18,11 @@ contract DraiTest is DSTest {
     function test_basic_sanity() public {
         assertTrue(true);
     }
+
+    function test_token_properties() public {
+        assertEq(drai.name(), "Drai");
+        assertEq(drai.symbol(), "DRAI");
+        assertEq(drai.version(), "1");
+        assertEq(uint256(drai.decimals()), uint256(18));
+    }
 }
