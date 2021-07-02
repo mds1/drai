@@ -20,9 +20,12 @@ interface RaiLike is CoinLike {
 }
 
 contract DraiTest is DSTest {
+    uint256 constant RAY = 10 ** 27;
+
     Hevm hevm = Hevm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
-    Drai drai;
+    OracleRelayerLike public oracleRelayer = OracleRelayerLike(0x4ed9C0dCa0479bC64d8f4EB3007126D5791f7851);
     RaiLike rai = RaiLike(0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919);
+    Drai drai;
 
     function setUp() public virtual {
         drai = new Drai();
@@ -33,11 +36,27 @@ contract DraiTest is DSTest {
         rai.approve(address(drai), uint256(-1));
         assertEq(rai.balanceOf(address(this)), initialRaiBalance);
         assertEq(rai.allowance(address(this), address(drai)), uint256(-1));
+
+        // Set initial redemption price to 1, so minting is 1:1 by default
+        setRaiRedemptionPrice(RAY);
+        assertEq(oracleRelayer.redemptionPrice(), RAY);
     }
 
     function setRaiBalance(address dst, uint256 wad) public {
         bytes32 slot = keccak256(abi.encode(dst, 6)); // get storage slot
         hevm.store(address(rai), slot, bytes32(wad)); // set balance of `dst` to `wad` RAI
+    }
+
+    function setRaiRedemptionPrice(uint256 wad) public {
+        // Sets the redemption price to wad. Also sets the internal redemption rate to 1 and sets the last update
+        // time to now, so no interest accrues when redemptionPrice() is called
+        bytes32 redemptionPriceSlot = bytes32(uint256(4));
+        bytes32 redemptionRateSlot = bytes32(uint256(5));
+        bytes32 redemptionPriceUpdateTimeSlot = bytes32(uint256(6));
+
+        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(wad));
+        hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(RAY));
+        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(block.timestamp));
     }
 
     function testFail_basic_sanity() public {
@@ -92,7 +111,7 @@ contract TokenTest is DraiTest {
     // Test users
     address user1;
     address user2;
-    
+
     // Parameters for this contract
     address self = address(this);
     uint256 constant initialBalanceThis = 20 ether;
@@ -108,7 +127,7 @@ contract TokenTest is DraiTest {
     function setUp() public override {
         super.setUp();
         hevm.warp(deadline);
-        
+
         // Use our RAI balance to mint DRAI
         drai.join(address(this), initialBalanceThis);
 
@@ -219,7 +238,7 @@ contract TokenTest is DraiTest {
     }
 
     // --- Permit tests ---
-    
+
     // Helper method to return an ERC-2612 `permit` digest for the `owner` to sign
     function getDigest(address owner_, address spender_, uint256 value_, uint256 nonce_, uint256 deadline_) public returns (bytes32) {
         return keccak256(

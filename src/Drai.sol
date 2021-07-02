@@ -6,9 +6,19 @@ interface CoinLike {
     function balanceOf(address) external returns (uint256);
 }
 
+interface OracleRelayerLike {
+    // Fetches the latest redemption price by first updating it (returns a RAY)
+    function redemptionPrice() external returns (uint256);
+    // The force that changes the system users' incentives by changing the redemption price (returns a RAY)
+    function redemptionRate() external returns (uint256);
+    // Last time when the redemption price was changed
+    function redemptionPriceUpdateTime() external returns (uint256);
+}
+
 contract Drai {
     // -- Data --
     CoinLike public raiToken = CoinLike(0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919);
+    OracleRelayerLike public oracleRelayer = OracleRelayerLike(0x4ed9C0dCa0479bC64d8f4EB3007126D5791f7851);
 
     // --- ERC20 Data ---
     string  public constant name     = "Drai";
@@ -113,32 +123,36 @@ contract Drai {
     }
 
     // --- Join/Exit ---
-    // wad is denominated in rai
-    function join(address dst, uint256 wad) external {
-        // TODO only supports 1:1 minting for now
-        uint256 amount = wad;
-        balanceOf[dst] = add(balanceOf[dst], amount);
-        totalSupply    = add(totalSupply, amount);
+    // amount is denominated in RAI
+    function join(address user, uint256 amount) external {
+        // Get amount to mint based on current redemption price
+        uint256 redemptionPrice = oracleRelayer.redemptionPrice();
+        uint256 mintAmount = rmul(redemptionPrice, amount); // ray * wad = wad, so no other unit conversions needed
 
-        raiToken.transferFrom(msg.sender, address(this), wad);
-        emit Transfer(address(0), dst, amount);
+        // Update state and transfer tokens
+        balanceOf[user] = add(balanceOf[user], mintAmount);
+        totalSupply    = add(totalSupply, mintAmount);
+        raiToken.transferFrom(msg.sender, address(this), amount);
+        emit Transfer(address(0), user, mintAmount);
     }
 
-    // wad is denominated in drai (USD)
-    function exit(address src, uint256 wad) public {
-        // TODO only supports 1:1 minting for now
-        require(balanceOf[src] >= wad, "drai/insufficient-balance");
+    // amount is denominated in DRAI (USD)
+    function exit(address src, uint256 amount) public {
+        // Balance and allowance checks
+        require(balanceOf[src] >= amount, "drai/insufficient-balance");
         if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
-            require(allowance[src][msg.sender] >= wad, "drai/insufficient-allowance");
-            allowance[src][msg.sender] = sub(allowance[src][msg.sender], wad);
+            require(allowance[src][msg.sender] >= amount, "drai/insufficient-allowance");
+            allowance[src][msg.sender] = sub(allowance[src][msg.sender], amount);
         }
-        balanceOf[src] = sub(balanceOf[src], wad);
-        totalSupply      = sub(totalSupply, wad);
 
-        // TODO only supports 1:1 minting for now
-        uint256 amount = wad;
-        raiToken.transfer(msg.sender, amount);
+        // Get amount to redeem based on current redemption price
+        uint256 redemptionPrice = oracleRelayer.redemptionPrice();
+        uint256 redeemAmount = rmul(redemptionPrice, amount); // ray * wad = wad, so no other unit conversions needed
 
-        emit Transfer(src, address(0), wad);
+        // Update state and transfer tokens
+        balanceOf[src] = sub(balanceOf[src], amount);
+        totalSupply      = sub(totalSupply, amount);
+        raiToken.transfer(msg.sender, redeemAmount);
+        emit Transfer(src, address(0), amount);
     }
 }
