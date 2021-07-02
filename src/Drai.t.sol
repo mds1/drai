@@ -307,4 +307,59 @@ contract TokenTest is DraiTest {
         drai.permit(owner, spender, value, deadline, v, r, s);
         drai.permit(owner, spender, value, deadline, v, r, s);
     }
+
+    // --- Dollar peg tests ---
+    function testRedemptionPriceUpdateOnConstruction() public {
+        // TODO ensure cached redemption price is updated in constructor
+    }
+    
+    function testRedemptionPriceUpdateOnTransfer() public {
+        // TODO ensure cached redemption price is updated on transfer
+    }
+    
+    function testRedemptionPriceUpdateOnTransferFrom() public {
+        // TODO ensure cached redemption price is updated on transferFrom
+    }
+    
+    function testRedemptionPriceUpdateOnApprove() public {
+        // TODO ensure cached redemption price is updated on approve
+    }
+    
+    function testRedemptionPriceUpdateOnPermit() public {
+        // TODO ensure cached redemption price is updated on permit
+    }
+
+    function testComputeRedemptionPrice() public {
+        // TODO check user's balance, update redemption price, check balance again
+    }
+    
+    function testComputeRedemptionPriceAccuracy() public {
+        // TODO compute redemption price, read most recent redemption price, and compare the two
+    }
+
+    function testBalanceOf() public {
+        // TODO check user's balance, update redemption price, check balance again
+    }
+
+    function testTotalSupply() public {
+        // TODO check total supply, update redemption price, check balance again
+    }
+
+    function testJoin() public {
+        // TODO check balance before and after joining based on redemption price
+    }
+
+    function testExit() public {
+        // TODO check balance before and after exiting based on redemption price
+    }
+
+    function testFailExitInsufficientBalance() public {
+        // TODO exit fails with insufficient balance
+        assertTrue(false);
+    }
+
+    function testFailExitInsufficientAllowance() public {
+        // TODO exit fails with insufficient allowance
+        assertTrue(false);
+    }
 }
