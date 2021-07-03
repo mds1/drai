@@ -20,12 +20,20 @@ interface RaiLike is CoinLike {
 }
 
 contract DraiTest is DSTest {
+    // --- Data ---
     uint256 constant RAY = 10 ** 27;
+    uint256 initialRedemptionPrice = RAY;
 
+    // Contracts
     Hevm hevm = Hevm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
     OracleRelayerLike public oracleRelayer = OracleRelayerLike(0x4ed9C0dCa0479bC64d8f4EB3007126D5791f7851);
     RaiLike rai = RaiLike(0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919);
     Drai drai;
+
+    // Storage slot locations used for updating OracleRelayer's redemption price info
+    bytes32 redemptionPriceSlot = bytes32(uint256(4));
+    bytes32 redemptionRateSlot = bytes32(uint256(5));
+    bytes32 redemptionPriceUpdateTimeSlot = bytes32(uint256(6));
 
     function setUp() public virtual {
         drai = new Drai();
@@ -38,7 +46,7 @@ contract DraiTest is DSTest {
         assertEq(rai.allowance(address(this), address(drai)), uint256(-1));
 
         // Set initial redemption price to 1, so minting is 1:1 by default
-        setRaiRedemptionPrice(RAY);
+        setRaiRedemptionPrice(initialRedemptionPrice);
         assertEq(oracleRelayer.redemptionPrice(), RAY);
     }
 
@@ -47,16 +55,20 @@ contract DraiTest is DSTest {
         hevm.store(address(rai), slot, bytes32(wad)); // set balance of `dst` to `wad` RAI
     }
 
-    function setRaiRedemptionPrice(uint256 wad) public {
-        // Sets the redemption price to wad. Also sets the internal redemption rate to 1 and sets the last update
-        // time to now, so no interest accrues when redemptionPrice() is called
-        bytes32 redemptionPriceSlot = bytes32(uint256(4));
-        bytes32 redemptionRateSlot = bytes32(uint256(5));
-        bytes32 redemptionPriceUpdateTimeSlot = bytes32(uint256(6));
-
-        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(wad));
+    function setRaiRedemptionPrice(uint256 price) public {
+        // Sets the redemption price to price. Also sets the internal redemption rate to 1 and sets the last update
+        // time to now, so no additional rate accrues when redemptionPrice() is called
+        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
         hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(RAY));
-        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(block.timestamp));
+        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(now));
+    }
+
+    function setRaiRedemptionParams(uint256 price, uint256 rate, uint256 timestamp) public {
+        require(timestamp >= now, "setRaiRedemptionParams/bad-timestamp");
+        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
+        hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(rate));
+        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(timestamp));
+        hevm.warp(timestamp); // required to ensure current block time matches timestamp
     }
 
     function testFail_basic_sanity() public {
@@ -126,7 +138,7 @@ contract TokenTest is DraiTest {
 
     function setUp() public override {
         super.setUp();
-        hevm.warp(deadline);
+        hevm.warp(deadline - 52 weeks); // don't warp to deadline to allow room to warp more before permit deadline
 
         // Use our RAI balance to mint DRAI
         drai.join(address(this), initialBalanceThis);
@@ -309,28 +321,79 @@ contract TokenTest is DraiTest {
     }
 
     // --- Dollar peg tests ---
+    function assertRedemptionParamsInit() public {
+        assertEq(drai.lastRedemptionPrice(), initialRedemptionPrice);
+        assertEq(drai.lastRedemptionRate(), RAY);
+        assertEq(drai.lastRedemptionPriceUpdateTime(), now);
+    }
+
+    function assertRedemptionParamsNew(uint256 price, uint256 rate, uint256 timestamp) public {
+        assertEq(drai.lastRedemptionPrice(), price);
+        assertEq(drai.lastRedemptionRate(), rate);
+        assertEq(drai.lastRedemptionPriceUpdateTime(), timestamp);
+    }
+
     function testRedemptionPriceUpdateOnConstruction() public {
-        // TODO ensure cached redemption price is updated in constructor
+        assertRedemptionParamsInit();
     }
     
     function testRedemptionPriceUpdateOnTransfer() public {
-        // TODO ensure cached redemption price is updated on transfer
+        // Ensure cached redemption data is updated on transfer
+        assertRedemptionParamsInit();
+        uint256 newTime = now + 1 weeks;
+        setRaiRedemptionParams(123, 456, newTime);
+        drai.transfer(self, 0);
+        assertRedemptionParamsNew(123, 456, newTime);
     }
     
     function testRedemptionPriceUpdateOnTransferFrom() public {
-        // TODO ensure cached redemption price is updated on transferFrom
+        // Ensure cached redemption data is updated on transferFrom
+        assertRedemptionParamsInit();
+        uint256 newTime = now + 1 weeks;
+        setRaiRedemptionParams(123, 456, newTime);
+        drai.transferFrom(self, self, 0);
+        assertRedemptionParamsNew(123, 456, newTime);
     }
     
     function testRedemptionPriceUpdateOnApprove() public {
-        // TODO ensure cached redemption price is updated on approve
+        // Ensure cached redemption data is updated on approve
+        assertRedemptionParamsInit();
+        uint256 newTime = now + 1 weeks;
+        setRaiRedemptionParams(123, 456, newTime);
+        drai.approve(self, 0);
+        assertRedemptionParamsNew(123, 456, newTime);
     }
     
     function testRedemptionPriceUpdateOnPermit() public {
-        // TODO ensure cached redemption price is updated on permit
+        // Ensure cached redemption data is updated on permit
+        assertRedemptionParamsInit();
+        uint256 newTime = now + 1 weeks;
+        setRaiRedemptionParams(123, 456, newTime);
+        (uint8 v, bytes32 r, bytes32 s) = getValidPermitSignature();
+        drai.permit(owner, spender, value, deadline, v, r, s);
+        assertRedemptionParamsNew(123, 456, newTime);
+    }
+
+    function testRedemptionPriceUpdateOnJoin() public {
+        // Ensure cached redemption data is updated on join
+        assertRedemptionParamsInit();
+        uint256 newTime = now + 1 weeks;
+        setRaiRedemptionParams(123, 456, newTime);
+        drai.join(self, 0);
+        assertRedemptionParamsNew(123, 456, newTime);
+    }
+    
+    function testRedemptionPriceUpdateOnExit() public {
+        // Ensure cached redemption data is updated on exit
+        assertRedemptionParamsInit();
+        uint256 newTime = now + 1 weeks;
+        setRaiRedemptionParams(123, 456, newTime);
+        drai.exit(self, 0);
+        assertRedemptionParamsNew(123, 456, newTime);
     }
 
     function testComputeRedemptionPrice() public {
-        // TODO check user's balance, update redemption price, check balance again
+        // TODO check user's balance, update redemption data, check balance again
     }
     
     function testComputeRedemptionPriceAccuracy() public {
