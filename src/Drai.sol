@@ -156,10 +156,39 @@ contract Drai {
      * @param spender The address whose allowance is changed
      * @param amount The new total allowance for the usr, specified in Drai
      */
-    function _approve(address owner, address spender, uint amount) private {
+    function _approve(address owner, address spender, uint256 amount) private {
         updateRedemptionPrice();
         allowance[owner][spender] = amount == uint256(-1) ? amount : _draiToRai(amount); // avoid overflow on MAX_UINT approvals
         emit Approval(owner, spender, amount);
+    }
+
+    // --- Transfer aliases ---
+    /*
+     * @notice Send Drai to another address
+     * @param usr The address to send tokens to
+     * @param amount The amount of Drai to send
+     */
+    function push(address usr, uint256 amount) external {
+        transferFrom(msg.sender, usr, amount);
+    }
+
+    /*
+     * @notice Transfer Drai from another address to your address
+     * @param usr The address to take Drai from
+     * @param amount The amount of Drai to take from the usr
+     */
+    function pull(address usr, uint256 amount) external {
+        transferFrom(usr, msg.sender, amount);
+    }
+
+    /*
+     * @notice Transfer Drai from another address to a destination address (if allowed)
+     * @param src The address to transfer Drai from
+     * @param dst The address to transfer Drai to
+     * @param amount The amount of Drai to transfer
+     */
+    function move(address src, address dst, uint256 amount) external {
+        transferFrom(src, dst, amount);
     }
 
     // --- ERC-2612 permit: approve by signature ---
@@ -173,7 +202,7 @@ contract Drai {
      * @param r ECDSA signature component: x-coordinate of `R`
      * @param s ECDSA signature component: `s` value of the signature
      */
-    function permit(address owner, address spender, uint amount, uint deadline, uint8 v, bytes32 r, bytes32 s) external {
+    function permit(address owner, address spender, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external {
         require(deadline >= block.timestamp, 'drai/expired');
         bytes32 digest = keccak256(
             abi.encodePacked(
@@ -211,37 +240,39 @@ contract Drai {
      * @notice Reddem Drai for Rai
      * @dev Use MAX_UINT256 as `amount` to redeem all Drai held by `src`
      * @param src The address from which to pull Drai
+     * @param dst The address to send Rai to
      * @param amount The amount of Rai to send back after redemption (Drai amount is calculated)
      */
-    function redeemUnderlying(address src, uint256 amount) public {
+    function redeemUnderlying(address src, address dst, uint256 amount) public {
         updateRedemptionPrice();
         uint256 raiAmount = amount == uint256(-1) ? _balances[src] : amount;
-        _redeem(src, raiAmount, _raiToDrai(raiAmount));
+        _redeem(src, dst, raiAmount, _raiToDrai(raiAmount));
     }
 
     /*
      * @notice Reddem Drai for Rai
      * @dev Use MAX_UINT256 as `amount` to redeem all Drai held by `src`
      * @param src The address from which to pull Drai
+     * @param dst The address to send Rai to
      * @param amount The amount of Drai to send to this contract (Rai amount is calculated)
      */
-    function redeem(address src, uint256 amount) public {
+    function redeem(address src, address dst, uint256 amount) public {
         updateRedemptionPrice();
         uint256 draiAmount = amount == uint256(-1) ? balanceOf(src) : amount;
-        _redeem(src, _draiToRai(draiAmount), draiAmount);
+        _redeem(src, dst, _draiToRai(draiAmount), draiAmount);
     }
 
-    // 
     /*
      * @notice Reddem Drai for Rai
      * @dev Intended to be called from a method that ensures `raiAmount` and `draiAmount` are equivalent
      * @dev Assumes redemption price has already been updated before this method is called
      * @dev Use MAX_UINT256 as `amount` to redeem all Drai held by `src`
      * @param src The address from which to pull Drai
+     * @param dst The address to send Rai to
      * @param raiAmount The amount of Rai to send back after redemption
      * @param draiAmount The amount of Drai to send to this contract
      */
-    function _redeem(address src, uint256 raiAmount, uint256 draiAmount) internal {
+    function _redeem(address src, address dst, uint256 raiAmount, uint256 draiAmount) internal {
         // Balance and allowance checks
         require(_balances[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
@@ -252,7 +283,7 @@ contract Drai {
         // Update state and transfer tokens
         _balances[src] = subtract(_balances[src], raiAmount);
         _totalSupply    = subtract(_totalSupply, raiAmount);
-        raiToken.transfer(msg.sender, raiAmount);
+        raiToken.transfer(dst, raiAmount);
         emit Transfer(src, address(0), draiAmount);
     }
 
