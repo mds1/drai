@@ -119,7 +119,7 @@ contract Drai {
     // wad is specified in DRAI
     function transferFrom(address src, address dst, uint256 wad) public returns (bool) {
         updateRedemptionPrice();
-        uint256 raiAmount = draiToRai(wad);
+        uint256 raiAmount = _draiToRai(wad);
         require(_balances[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
             require(allowance[src][msg.sender] >= raiAmount, "drai/insufficient-allowance");
@@ -140,7 +140,7 @@ contract Drai {
     // value is specified in DRAI
     function _approve(address owner, address spender, uint value) private {
         updateRedemptionPrice();
-        allowance[owner][spender] = value == uint256(-1) ? value : draiToRai(value); // avoid overflow on MAX_UINT approvals
+        allowance[owner][spender] = value == uint256(-1) ? value : _draiToRai(value); // avoid overflow on MAX_UINT approvals
         emit Approval(owner, spender, value);
     }
 
@@ -160,12 +160,12 @@ contract Drai {
         _approve(owner, spender, value);
     }
 
-    // --- Join/Exit ---
+    // --- Mint and Redeem Drai ---
     // amount is denominated in RAI
-    function join(address user, uint256 amount) external {
+    function mint(address user, uint256 amount) external {
         // Get amount of DRAI to mint based on current redemption price
-        uint256 redemptionPrice = updateRedemptionPrice();
-        uint256 draiAmount = raiToDrai(amount);
+        updateRedemptionPrice();
+        uint256 draiAmount = _raiToDrai(amount);
 
         // Update state and transfer tokens. Balances are stored internally at a 1:1 exchange rate with RAI, and
         // "true" dollar-pegged balances are computed on-demand in the `balanceOf()` and totalSupply()` methods.
@@ -177,22 +177,22 @@ contract Drai {
     }
 
     // amount is denominated in RAI. Use MAX_UINT256 as `amount` to redeem all
-    function exitUnderlying(address src, uint256 amount) public {
+    function redeemUnderlying(address src, uint256 amount) public {
         updateRedemptionPrice();
         uint256 raiAmount = amount == uint256(-1) ? _balances[src] : amount;
-        _exit(src, raiAmount, raiToDrai(raiAmount));
+        _redeem(src, raiAmount, _raiToDrai(raiAmount));
     }
 
     // amount is denominated in DRAI (USD). Use MAX_UINT256 as `amount` to redeem all
-    function exit(address src, uint256 amount) public {
+    function redeem(address src, uint256 amount) public {
         updateRedemptionPrice();
         uint256 draiAmount = amount == uint256(-1) ? balanceOf(src) : amount;
-        _exit(src, draiToRai(draiAmount), draiAmount);
+        _redeem(src, _draiToRai(draiAmount), draiAmount);
     }
 
     // Intended to be called from a method that ensures `raiAmount` and `draiAmount` are equivalent. Assumes
     // redemption price has already been updated
-    function _exit(address src, uint256 raiAmount, uint256 draiAmount) internal {
+    function _redeem(address src, uint256 raiAmount, uint256 draiAmount) internal {
         // Balance and allowance checks
         require(_balances[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
@@ -216,12 +216,12 @@ contract Drai {
         return rmultiply(_totalSupply, lastRedemptionPrice);
     }
 
-    function draiToRai(uint256 amount) internal view returns(uint256) {
+    function _draiToRai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
         return rdivide(amount, lastRedemptionPrice); // wad / ray = wad, so no other unit conversions needed
     }
 
-    function raiToDrai(uint256 amount) internal view returns(uint256) {
+    function _raiToDrai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
         return rmultiply(amount, lastRedemptionPrice); // ray * wad = wad, so no other unit conversions needed
     }

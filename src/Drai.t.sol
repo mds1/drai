@@ -5,13 +5,13 @@ import "./Drai.sol";
 
 interface Hevm {
     // Sets block timestamp to `x`
-    function warp(uint256 x) external;
+    function warp(uint256 x) external view;
     // Sets slot `loc` of contract `c` to value `val`
-    function store(address c, bytes32 loc, bytes32 val) external;
+    function store(address c, bytes32 loc, bytes32 val) external view;
     // Generates address derived from private key `sk`
-    function addr(uint sk) external returns (address addr);
+    function addr(uint sk) external view returns (address _addr);
     // Signs `digest` with private key `sk` (WARNING: this is insecure as it leaks the private key)
-    function sign(uint sk, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
+    function sign(uint sk, bytes32 digest) external view returns (uint8 v, bytes32 r, bytes32 s);
 }
 
 interface RaiLike is CoinLike {
@@ -19,6 +19,23 @@ interface RaiLike is CoinLike {
     function allowance(address, address) external returns (uint256);
 }
 
+contract DraiUser {
+    Drai drai;
+
+    constructor(Drai _drai) public {
+        drai = _drai;
+    }
+
+    function doTransferFrom(address from, address to, uint256 amount) public returns (bool) {
+        return drai.transferFrom(from, to, amount);
+    }
+
+    function doApprove(address recipient, uint256 amount) public returns (bool) {
+        return drai.approve(recipient, amount);
+    }
+}
+
+// Tests basic setup and initialization of the contract and test suite
 contract DraiTest is DSTest {
     // --- Data ---
     uint256 constant RAY = 10 ** 27;
@@ -30,104 +47,43 @@ contract DraiTest is DSTest {
     RaiLike rai = RaiLike(0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919);
     Drai drai;
 
-    // Storage slot locations used for updating OracleRelayer's redemption price info
-    bytes32 redemptionPriceSlot = bytes32(uint256(4));
-    bytes32 redemptionRateSlot = bytes32(uint256(5));
-    bytes32 redemptionPriceUpdateTimeSlot = bytes32(uint256(6));
-
+    // --- Setup ---
     function setUp() public virtual {
         drai = new Drai();
-
-        // Give us 100 RAI to work with
-        uint256 initialRaiBalance = 100 ether;
-        setRaiBalance(address(this), initialRaiBalance);
-        rai.approve(address(drai), uint256(-1));
-        assertEq(rai.balanceOf(address(this)), initialRaiBalance);
-        assertEq(rai.allowance(address(this), address(drai)), uint256(-1));
-
-        // Set initial redemption price to 1, so minting is 1:1 by default
-        setRaiRedemptionPrice(initialRedemptionPrice);
-        assertEq(oracleRelayer.redemptionPrice(), RAY);
     }
 
-    function setRaiBalance(address dst, uint256 wad) public {
-        bytes32 slot = keccak256(abi.encode(dst, 6)); // get storage slot
-        hevm.store(address(rai), slot, bytes32(wad)); // set balance of `dst` to `wad` RAI
-    }
-
-    function setRaiRedemptionPrice(uint256 price) public {
-        // Sets the redemption price to price. Also sets the internal redemption rate to 1 and sets the last update
-        // time to now, so no additional rate accrues when redemptionPrice() is called
-        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
-        hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(RAY));
-        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(now));
-    }
-
-    function setRaiRedemptionParams(uint256 price, uint256 rate, uint256 timestamp) public {
-        require(timestamp >= now, "setRaiRedemptionParams/bad-timestamp");
-        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
-        hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(rate));
-        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(timestamp));
-        hevm.warp(timestamp); // required to ensure current block time matches timestamp
-    }
-
-    function testFail_basic_sanity() public {
+    // --- Basic initialization tests ---
+    function testFailBasicSanity() public {
         assertTrue(false);
     }
 
-    function test_basic_sanity() public {
+    function testBasicSanity() public {
         assertTrue(true);
     }
 
-    function test_token_properties() public {
+    function testTokenProperties() public {
         assertEq(drai.name(), "Drai");
         assertEq(drai.symbol(), "DRAI");
         assertEq(drai.version(), "1");
         assertEq(uint256(drai.decimals()), uint256(18));
     }
-}
 
-contract DraiUser {
-    Drai token;
-
-    constructor(Drai token_) public {
-        token = token_;
-    }
-
-    function doTransferFrom(address from, address to, uint256 amount) public returns (bool) {
-        return token.transferFrom(from, to, amount);
-    }
-
-    function doTransfer(address to, uint256 amount) public returns (bool) {
-        return token.transfer(to, amount);
-    }
-
-    function doApprove(address recipient, uint256 amount) public returns (bool) {
-        return token.approve(recipient, amount);
-    }
-
-    function doAllowance(address owner, address spender) public view returns (uint256) {
-        return token.allowance(owner, spender);
-    }
-
-    function doBalanceOf(address who) public view returns (uint256) {
-        return token.balanceOf(who);
-    }
-
-    function doApprove(address guy) public returns (bool) {
-        return token.approve(guy, uint256(-1));
+    function testDraiAddress() public {
+        // The drai address generated by HEVM
+        assertEq(address(drai), address(0xCe71065D4017F316EC606Fe4422e11eB2c47c246));
     }
 }
 
 contract TokenTest is DraiTest {
-    // Test users
+    // --- Data ---
+    // Test users that will later be of type DraiUser
     address user1;
     address user2;
 
     // Parameters for this contract
     address self = address(this);
-    uint256 constant initialDraiBalance = 20 ether; // minted in setUp
-    uint256 initialRaiBalance;
+    uint256 constant initialDraiBalance = 20 ether; // to be minted in setUp at 1:1 ratio
+    uint256 initialRaiBalance; // set after minting Drai
 
     // Parameters for `permit` tests
     uint256 skOwner = 1; // owner's private key, used for signing
@@ -137,12 +93,75 @@ contract TokenTest is DraiTest {
     uint256 deadline = 5000000000; // timestamp far in the future
     uint256 nonce = 0;
 
+    // Storage slot locations used for updating OracleRelayer's redemption price info
+    bytes32 redemptionPriceSlot = bytes32(uint256(4));
+    bytes32 redemptionRateSlot = bytes32(uint256(5));
+    bytes32 redemptionPriceUpdateTimeSlot = bytes32(uint256(6));
+
+    // --- Helpers ---
+    function setRaiBalance(address dst, uint256 wad) public view {
+        bytes32 slot = keccak256(abi.encode(dst, 6)); // get storage slot
+        hevm.store(address(rai), slot, bytes32(wad)); // set balance of `dst` to `wad` RAI
+    }
+
+    function setRaiRedemptionPrice(uint256 price) public view {
+        // Sets the redemption price to price. Also sets the internal redemption rate to 1 and sets the last update
+        // time to now, so no additional rate accrues when redemptionPrice() is called
+        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
+        hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(RAY));
+        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(now));
+    }
+
+    function setRaiRedemptionParams(uint256 price, uint256 rate, uint256 timestamp) public view {
+        require(timestamp >= now, "setRaiRedemptionParams/bad-timestamp");
+        hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
+        hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(rate));
+        hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(timestamp));
+        hevm.warp(timestamp); // required to ensure current block time matches timestamp
+    }
+
+    // Returns an ERC-2612 `permit` digest for the `owner` to sign
+    function getDigest(address owner_, address spender_, uint256 value_, uint256 nonce_, uint256 deadline_) public view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                '\x19\x01',
+                drai.DOMAIN_SEPARATOR(),
+                keccak256(abi.encode(drai.PERMIT_TYPEHASH(), owner_, spender_, value_, nonce_, deadline_))
+            )
+        );
+    }
+
+    // Returns a valid `permit` signature signed by this contract's `owner` address
+    function getValidPermitSignature() public view returns (uint8, bytes32, bytes32) {
+        bytes32 digest = getDigest(owner, spender, value, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = hevm.sign(skOwner, digest);
+        return (v, r, s);
+    }
+
+    // Asserts that redemption parameters set on the Drai contract equal the passed in values
+    function assertRedemptionParamsNew(uint256 price, uint256 rate, uint256 timestamp) public {
+        assertEq(drai.lastRedemptionPrice(), price);
+        assertEq(drai.lastRedemptionRate(), rate);
+        assertEq(drai.lastRedemptionPriceUpdateTime(), timestamp);
+    }
+
+    // --- Setup ---
     function setUp() public override {
         super.setUp();
         hevm.warp(deadline - 52 weeks); // don't warp to deadline to allow room to warp more before permit deadline
 
+        // Give us 100 RAI to work with
+        setRaiBalance(address(this), 100 ether);
+        assertEq(rai.balanceOf(address(this)), 100 ether);
+        rai.approve(address(drai), uint256(-1));
+        assertEq(rai.allowance(address(this), address(drai)), uint256(-1));
+
+        // Set initial redemption price to 1, so minting is 1:1 by default
+        setRaiRedemptionPrice(initialRedemptionPrice);
+        assertEq(oracleRelayer.redemptionPrice(), RAY);
+
         // Use our RAI balance to mint DRAI
-        drai.join(self, initialDraiBalance);
+        drai.mint(self, initialDraiBalance);
         initialRaiBalance = rai.balanceOf(self);
 
         // Setup test users
@@ -150,7 +169,7 @@ contract TokenTest is DraiTest {
         user2 = address(new DraiUser(drai));
     }
 
-    // --- Standard ERC-20 functionality tests ---
+    // --- Test standard ERC-20 functionality ---
     function testSetupPrecondition() public {
         assertEq(drai.balanceOf(self), initialDraiBalance);
     }
@@ -252,30 +271,10 @@ contract TokenTest is DraiTest {
     }
 
     // --- Permit tests ---
-
-    // Helper method to return an ERC-2612 `permit` digest for the `owner` to sign
-    function getDigest(address owner_, address spender_, uint256 value_, uint256 nonce_, uint256 deadline_) public returns (bytes32) {
-        return keccak256(
-            abi.encodePacked(
-                '\x19\x01',
-                drai.DOMAIN_SEPARATOR(),
-                keccak256(abi.encode(drai.PERMIT_TYPEHASH(), owner_, spender_, value_, nonce_, deadline_))
-            )
-        );
+    function testPermitPrecondition() public {
+        assertEq(drai.allowance(owner, spender), 0);
+        assertEq(drai.nonces(owner), 0);
     }
-
-    // Helper method to return a valid `permit` signature signed by this contract's `owner` address
-    function getValidPermitSignature() public returns (uint8, bytes32, bytes32) {
-        bytes32 digest = getDigest(owner, spender, value, nonce, deadline);
-        (uint8 v, bytes32 r, bytes32 s) = hevm.sign(skOwner, digest);
-        return (v, r, s);
-    }
-
-    function testDraiAddress() public {
-        // The drai address generated by hevm
-        assertEq(address(drai), address(0xCe71065D4017F316EC606Fe4422e11eB2c47c246));
-    }
-
     function testTypehash() public {
         assertEq(drai.PERMIT_TYPEHASH(), 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9);
     }
@@ -285,12 +284,8 @@ contract TokenTest is DraiTest {
     }
 
     function testPermit() public {
-        assertEq(drai.allowance(owner, spender), 0);
-        assertEq(drai.nonces(owner), 0);
-
         (uint8 v, bytes32 r, bytes32 s) = getValidPermitSignature();
         drai.permit(owner, spender, value, deadline, v, r, s);
-
         assertEq(drai.allowance(owner, spender), value);
         assertEq(drai.nonces(owner), 1);
     }
@@ -322,20 +317,14 @@ contract TokenTest is DraiTest {
         drai.permit(owner, spender, value, deadline, v, r, s);
     }
 
-    // --- Dollar peg tests ---
+    // --- Test redemption parameters required to maintain dollar peg ---
     function testDollarPegPrecondition() public {
         assertEq(rai.balanceOf(self), initialRaiBalance);
         assertEq(drai.balanceOf(self), initialDraiBalance);
-        // also tests that the constructor initialized redemption data
+        // these next asserts also test that the constructor correctly initialized redemption data
         assertEq(drai.lastRedemptionPrice(), initialRedemptionPrice);
         assertEq(drai.lastRedemptionRate(), RAY);
         assertEq(drai.lastRedemptionPriceUpdateTime(), now);
-    }
-
-    function assertRedemptionParamsNew(uint256 price, uint256 rate, uint256 timestamp) public {
-        assertEq(drai.lastRedemptionPrice(), price);
-        assertEq(drai.lastRedemptionRate(), rate);
-        assertEq(drai.lastRedemptionPriceUpdateTime(), timestamp);
     }
 
     function testRedemptionPriceUpdateOnTransfer() public {
@@ -371,19 +360,19 @@ contract TokenTest is DraiTest {
         assertRedemptionParamsNew(123, 456, newTime);
     }
 
-    function testRedemptionPriceUpdateOnJoin() public {
-        // Ensure cached redemption data is updated on join
+    function testRedemptionPriceUpdateOnMint() public {
+        // Ensure cached redemption data is updated on mint
         uint256 newTime = now + 1 weeks;
         setRaiRedemptionParams(123, 456, newTime);
-        drai.join(self, 0);
+        drai.mint(self, 0);
         assertRedemptionParamsNew(123, 456, newTime);
     }
     
-    function testRedemptionPriceUpdateOnExit() public {
-        // Ensure cached redemption data is updated on exit
+    function testRedemptionPriceUpdateOnRedeem() public {
+        // Ensure cached redemption data is updated on redeem
         uint256 newTime = now + 1 weeks;
         setRaiRedemptionParams(123, 456, newTime);
-        drai.exit(self, 0);
+        drai.redeem(self, 0);
         assertRedemptionParamsNew(123, 456, newTime);
     }
 
@@ -429,89 +418,89 @@ contract TokenTest is DraiTest {
         assertEq(drai.totalSupply(), 2 * initialDraiBalance);
     }
 
-    function testJoinSelf() public {
+    function testMintSelf() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY * 2);
-        // Join
-        uint256 joinAmount = 30 ether;
-        drai.join(self, joinAmount);
-        assertEq(rai.balanceOf(self), initialRaiBalance - joinAmount);
-        assertEq(drai.balanceOf(self), 2 * initialDraiBalance + 2 * joinAmount);
+        // Mint
+        uint256 mintAmount = 30 ether;
+        drai.mint(self, mintAmount);
+        assertEq(rai.balanceOf(self), initialRaiBalance - mintAmount);
+        assertEq(drai.balanceOf(self), 2 * initialDraiBalance + 2 * mintAmount);
     }
 
-    function testJoinOther() public {
+    function testMintOther() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY * 3456);
-        // Join
-        uint256 joinAmount = 30 ether;
+        // Mint
+        uint256 mintAmount = 30 ether;
         address to = address(1); // this user has no initial balances
-        drai.join(to, joinAmount);
-        assertEq(rai.balanceOf(self), initialRaiBalance - joinAmount);
-        assertEq(drai.balanceOf(to), 3456 * joinAmount);
+        drai.mint(to, mintAmount);
+        assertEq(rai.balanceOf(self), initialRaiBalance - mintAmount);
+        assertEq(drai.balanceOf(to), 3456 * mintAmount);
     }
 
-    function testExit() public {
+    function testRedeem() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY / 2);
-        // Exit
-        uint256 exitAmount = 5 ether; // in DRAI
-        drai.exit(self, exitAmount);
-        assertEq(rai.balanceOf(self), initialRaiBalance + exitAmount * 2);
-        assertEq(drai.balanceOf(self), initialDraiBalance / 2 - exitAmount);
+        // Redeem
+        uint256 redeemAmount = 5 ether; // in DRAI
+        drai.redeem(self, redeemAmount);
+        assertEq(rai.balanceOf(self), initialRaiBalance + redeemAmount * 2);
+        assertEq(drai.balanceOf(self), initialDraiBalance / 2 - redeemAmount);
     }
     
-    function testExitUnderlying() public {
+    function testRedeemUnderlying() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY * 2);
-        // Exit
-        uint256 exitAmount = 5 ether; // in RAI
-        drai.exitUnderlying(self, exitAmount);
-        assertEq(rai.balanceOf(self), initialRaiBalance + exitAmount);
-        assertEq(drai.balanceOf(self), initialDraiBalance * 2 - exitAmount * 2);
+        // Redeem
+        uint256 redeemAmount = 5 ether; // in RAI
+        drai.redeemUnderlying(self, redeemAmount);
+        assertEq(rai.balanceOf(self), initialRaiBalance + redeemAmount);
+        assertEq(drai.balanceOf(self), initialDraiBalance * 2 - redeemAmount * 2);
     }
 
-    function testExitMaxUint() public {
+    function testRedeemMaxUint() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY * 12);
-        // Exit
-        uint256 exitAmount = uint256(-1); // in DRAI
-        drai.exit(self, exitAmount);
+        // Redeem
+        uint256 redeemAmount = uint256(-1); // in DRAI
+        drai.redeem(self, redeemAmount);
         assertEq(rai.balanceOf(self), 100 ether);
         assertEq(drai.balanceOf(self), 0);
     }
     
-    function testExitUnderlyingMaxUint() public {
+    function testRedeemUnderlyingMaxUint() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY * 12);
-        // Exit
-        uint256 exitAmount = uint256(-1); // in RAI
-        drai.exitUnderlying(self, exitAmount);
+        // Redeem
+        uint256 redeemAmount = uint256(-1); // in RAI
+        drai.redeemUnderlying(self, redeemAmount);
         assertEq(rai.balanceOf(self), 100 ether);
         assertEq(drai.balanceOf(self), 0);
     }
 
-    function testFailExitInsufficientBalance() public {
-        // exit fails with insufficient-balance
-        drai.exit(self, 500 ether);
+    function testFailRedeemInsufficientBalance() public {
+        // redeem fails with insufficient-balance
+        drai.redeem(self, 500 ether);
     }
 
-    function testFailExitUnderlyingInsufficientBalance() public {
-        // exitUnderlying fails with insufficient-balance
-        drai.exitUnderlying(self, 500 ether);
+    function testFailRedeemUnderlyingInsufficientBalance() public {
+        // redeemUnderlying fails with insufficient-balance
+        drai.redeemUnderlying(self, 500 ether);
     }
 
-    function testFailExitInsufficientAllowance() public {
-        // exit fails with insufficient-allowance
+    function testFailRedeemInsufficientAllowance() public {
+        // redeem fails with insufficient-allowance
         address user = address(1);
         drai.transfer(user, drai.balanceOf(self));
-        drai.exit(user, 1);
+        drai.redeem(user, 1);
     }
 
-    function testFailExitUnderlyingInsufficientAllowance() public {
-        // exitUnderlying fails with insufficient-allowance
+    function testFailRedeemUnderlyingInsufficientAllowance() public {
+        // redeemUnderlying fails with insufficient-allowance
         address user = address(1);
         drai.transfer(user, drai.balanceOf(self));
         rai.transfer(user, rai.balanceOf(self));
-        drai.exit(user, 1);
+        drai.redeem(user, 1);
     }
 }
