@@ -22,7 +22,7 @@ contract Drai {
 
     // Because RAI's OracleRelayer does not expose the last redemption price, we must caclulate it as
     // needed to avoid breaking conformity to ERC-20 standards. Doing this requires us to cache the
-    // redemption price and update time ourselves
+    // redemption price, redemption rate, and update time ourselves
     uint256 public lastRedemptionPrice;
     uint256 public lastRedemptionRate;
     uint256 public lastRedemptionPriceUpdateTime;
@@ -111,58 +111,89 @@ contract Drai {
     }
 
     // --- Token ---
-    // wad is specified in DRAI
-    function transfer(address dst, uint256 wad) external returns (bool) {
-        return transferFrom(msg.sender, dst, wad);
+    /*
+    * @notice Transfer coins to another address
+    * @param dst The address to transfer coins to
+    * @param amount The amount of coins to transfer, denominated in Drai
+    */
+    function transfer(address dst, uint256 amount) external returns (bool) {
+        return transferFrom(msg.sender, dst, amount);
     }
 
-    // wad is specified in DRAI
-    function transferFrom(address src, address dst, uint256 wad) public returns (bool) {
+    /*
+     * @notice Transfer coins from a source address to a destination address (if allowed)
+     * @param src The address from which to transfer coins
+     * @param dst The address that will receive the coins
+     * @param amount The amount of coins to transfer, specified in Drai
+     */
+    function transferFrom(address src, address dst, uint256 amount) public returns (bool) {
         updateRedemptionPrice();
-        uint256 raiAmount = _draiToRai(wad);
+        uint256 raiAmount = _draiToRai(amount);
         require(_balances[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
             require(allowance[src][msg.sender] >= raiAmount, "drai/insufficient-allowance");
             allowance[src][msg.sender] = subtract(allowance[src][msg.sender], raiAmount);
         }
-        _balances[src] = subtract(_balances[src], wad);
-        _balances[dst] = addition(_balances[dst], wad);
-        emit Transfer(src, dst, wad);
+        _balances[src] = subtract(_balances[src], amount);
+        _balances[dst] = addition(_balances[dst], amount);
+        emit Transfer(src, dst, amount);
         return true;
     }
 
-    // wad is specified in DRAI
-    function approve(address usr, uint256 wad) external returns (bool) {
-        _approve(msg.sender, usr, wad);
+    /*
+     * @notice Change the transfer/burn allowance that another address has on your behalf
+     * @param usr The address whose allowance is changed
+     * @param amount The new total allowance for the usr, specified in Drai
+     */
+    function approve(address usr, uint256 amount) external returns (bool) {
+        _approve(msg.sender, usr, amount);
         return true;
     }
 
-    // value is specified in DRAI
-    function _approve(address owner, address spender, uint value) private {
+    /*
+     * @notice Change the transfer/burn allowance that another address has on your behalf
+     * @param owner The address whose coins can be spent by `spender`
+     * @param spender The address whose allowance is changed
+     * @param amount The new total allowance for the usr, specified in Drai
+     */
+    function _approve(address owner, address spender, uint amount) private {
         updateRedemptionPrice();
-        allowance[owner][spender] = value == uint256(-1) ? value : _draiToRai(value); // avoid overflow on MAX_UINT approvals
-        emit Approval(owner, spender, value);
+        allowance[owner][spender] = amount == uint256(-1) ? amount : _draiToRai(amount); // avoid overflow on MAX_UINT approvals
+        emit Approval(owner, spender, amount);
     }
 
     // --- ERC-2612 permit: approve by signature ---
-    // value is specified in DRAI
-    function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external {
+    /*
+     * @notice Submit a signed message that modifies an allowance for a specific address
+     * @param owner The address whose coins can be spent by `spender`
+     * @param spender The address whose allowance is changed
+     * @param amount The new total allowance for the usr, specified in Drai
+     * @param deadline Timestamp the permit expires, i.e. latest valid time it can be submitted
+     * @param v ECDSA signature component: Parity of the `y` coordinate of point `R`
+     * @param r ECDSA signature component: x-coordinate of `R`
+     * @param s ECDSA signature component: `s` value of the signature
+     */
+    function permit(address owner, address spender, uint amount, uint deadline, uint8 v, bytes32 r, bytes32 s) external {
         require(deadline >= block.timestamp, 'drai/expired');
         bytes32 digest = keccak256(
             abi.encodePacked(
                 '\x19\x01',
                 DOMAIN_SEPARATOR,
-                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline))
+                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, amount, nonces[owner]++, deadline))
             )
         );
         address recoveredAddress = ecrecover(digest, v, r, s);
         require(recoveredAddress != address(0) && recoveredAddress == owner, 'drai/invalid-signature');
-        _approve(owner, spender, value);
+        _approve(owner, spender, amount);
     }
 
     // --- Mint and Redeem Drai ---
-    // amount is denominated in RAI
-    function mint(address user, uint256 amount) external {
+    /*
+     * @notice Mint new Drai by sending Rai to this contract
+     * @param usr The address for which to mint coins
+     * @param amount The amount of Rai to use for minting Drai
+     */
+    function mint(address usr, uint256 amount) external {
         // Get amount of DRAI to mint based on current redemption price
         updateRedemptionPrice();
         uint256 draiAmount = _raiToDrai(amount);
@@ -170,28 +201,46 @@ contract Drai {
         // Update state and transfer tokens. Balances are stored internally at a 1:1 exchange rate with RAI, and
         // "true" dollar-pegged balances are computed on-demand in the `balanceOf()` and totalSupply()` methods.
         // This is why the `Transfer` event emits `draiAmount` but `amount` is used everywhere else
-        _balances[user] = addition(_balances[user], amount);
+        _balances[usr] = addition(_balances[usr], amount);
         _totalSupply     = addition(_totalSupply, amount);
         raiToken.transferFrom(msg.sender, address(this), amount);
-        emit Transfer(address(0), user, draiAmount);
+        emit Transfer(address(0), usr, draiAmount);
     }
 
-    // amount is denominated in RAI. Use MAX_UINT256 as `amount` to redeem all
+    /*
+     * @notice Reddem Drai for Rai
+     * @dev Use MAX_UINT256 as `amount` to redeem all Drai held by `src`
+     * @param src The address from which to pull Drai
+     * @param amount The amount of Rai to send back after redemption (Drai amount is calculated)
+     */
     function redeemUnderlying(address src, uint256 amount) public {
         updateRedemptionPrice();
         uint256 raiAmount = amount == uint256(-1) ? _balances[src] : amount;
         _redeem(src, raiAmount, _raiToDrai(raiAmount));
     }
 
-    // amount is denominated in DRAI (USD). Use MAX_UINT256 as `amount` to redeem all
+    /*
+     * @notice Reddem Drai for Rai
+     * @dev Use MAX_UINT256 as `amount` to redeem all Drai held by `src`
+     * @param src The address from which to pull Drai
+     * @param amount The amount of Drai to send to this contract (Rai amount is calculated)
+     */
     function redeem(address src, uint256 amount) public {
         updateRedemptionPrice();
         uint256 draiAmount = amount == uint256(-1) ? balanceOf(src) : amount;
         _redeem(src, _draiToRai(draiAmount), draiAmount);
     }
 
-    // Intended to be called from a method that ensures `raiAmount` and `draiAmount` are equivalent. Assumes
-    // redemption price has already been updated
+    // 
+    /*
+     * @notice Reddem Drai for Rai
+     * @dev Intended to be called from a method that ensures `raiAmount` and `draiAmount` are equivalent
+     * @dev Assumes redemption price has already been updated before this method is called
+     * @dev Use MAX_UINT256 as `amount` to redeem all Drai held by `src`
+     * @param src The address from which to pull Drai
+     * @param raiAmount The amount of Rai to send back after redemption
+     * @param draiAmount The amount of Drai to send to this contract
+     */
     function _redeem(address src, uint256 raiAmount, uint256 draiAmount) internal {
         // Balance and allowance checks
         require(_balances[src] >= raiAmount, "drai/insufficient-balance");
@@ -208,20 +257,35 @@ contract Drai {
     }
 
     // --- Dollar peg logic ---
-    function balanceOf(address user) public view returns(uint256) {
-        return rmultiply(_balances[user], lastRedemptionPrice);
+    /**
+     * @notice Returns Drai balance of a user
+     * @dev Calculated dynamically based on last known Rai redemption price
+     * @param usr User whose balance to return
+     */
+    function balanceOf(address usr) public view returns(uint256) {
+        return rmultiply(_balances[usr], lastRedemptionPrice);
     }
 
-    function totalSupply() public view returns(uint256) {
+    /**
+     * @notice Returns total supply of Drai
+     * @dev Calculated dynamically based on last known Rai redemption price
+     */
+     function totalSupply() public view returns(uint256) {
         return rmultiply(_totalSupply, lastRedemptionPrice);
     }
 
+    /**
+     * @dev Helper method to convert a quantity of Drai to Rai, based on last known redemption price
+     */
     function _draiToRai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
         return rdivide(amount, lastRedemptionPrice); // wad / ray = wad, so no other unit conversions needed
     }
 
-    function _raiToDrai(uint256 amount) internal view returns(uint256) {
+    /**
+     * @dev Helper method to convert a quantity of Rai to Drai, based on last known redemption price
+     */
+     function _raiToDrai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
         return rmultiply(amount, lastRedemptionPrice); // ray * wad = wad, so no other unit conversions needed
     }
@@ -232,9 +296,9 @@ contract Drai {
      * price is -- you must send a transaction which updates the state to get the latest price.
      * The redemption price is required by the `balanceOf()` and `totalSupply()` methods, which
      * are required to be `view` methods to conform to ERC-20 (and to avoid breaking any frontend
-     * that wants to simply query a user's balance). The state variables required to compute the
-     * current redemption price are all public, so we use this method compute what the current
-     * redemption price is
+     * or contract that simply wants to query a user's balance). The state variables required to
+     * compute the current redemption price are all public, so we use this method compute what the
+     * current redemption price is based on our cached data
      * @dev This method is based on https://github.com/reflexer-labs/geb/blob/8ff6f9499df94486063a27b82e1b2126728ffa18/src/OracleRelayer.sol#L247-L261
      */
     function computeRedemptionPrice() public view returns (uint256) {
@@ -247,17 +311,17 @@ contract Drai {
 
     /**
      * @dev RAI's OracleRelayer does not have a view method to read what the current redemption
-     * price is, so this internal method caches the most recent value as often as possible. It's
-     * used in every non-view method to update and return the current redemption price
+     * price is, so this method caches the most recent value as often as possible. It's called at
+     * the start of every non-view method to update and store the current redemption price
      */
     function updateRedemptionPrice() public returns (uint256) {
-        // These are trusted external calls
+        // These are trusted external calls, so it's ok that we call them before modifying state in other methods
         lastRedemptionPrice = oracleRelayer.redemptionPrice(); // non-payable (i.e. non-view) method
         lastRedemptionRate = oracleRelayer.redemptionRate(); // view method
 
         // We just updated the OracleRelayer's redemption price which sets `oracleRelayer.redemptionPriceUpdateTime()`
         // to the current time. Therefore we can set our cached value directly to the current time, which avoids
-        // saves gas by avoiding another external call
+        // saves gas by avoiding another external call to read `redemptionPriceUpdateTime`
         lastRedemptionPriceUpdateTime = now;
         return lastRedemptionPrice;
     }
