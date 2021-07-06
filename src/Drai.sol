@@ -32,10 +32,10 @@ contract Drai {
     string  public constant symbol   = "DRAI";
     string  public constant version  = "1";
     uint8   public constant decimals = 18;
-    uint256 internal _totalSupply;
+    uint256 public totalSupplyRai;
 
-    mapping (address => uint256)                      internal _balances;
-    mapping (address => mapping (address => uint256)) public   allowance;
+    mapping (address => uint256)                      public balanceOfRai;
+    mapping (address => mapping (address => uint256)) public   allowanceRai;
     mapping (address => uint256)                      public   nonces;
 
     event Approval(address indexed src, address indexed guy, uint256 wad);
@@ -129,13 +129,13 @@ contract Drai {
     function transferFrom(address src, address dst, uint256 amount) public returns (bool) {
         updateRedemptionPrice();
         uint256 raiAmount = _draiToRai(amount);
-        require(_balances[src] >= raiAmount, "drai/insufficient-balance");
-        if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
-            require(allowance[src][msg.sender] >= raiAmount, "drai/insufficient-allowance");
-            allowance[src][msg.sender] = subtract(allowance[src][msg.sender], raiAmount);
+        require(balanceOfRai[src] >= raiAmount, "drai/insufficient-balance");
+        if (src != msg.sender && allowanceRai[src][msg.sender] != uint256(-1)) {
+            require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowanceRai");
+            allowanceRai[src][msg.sender] = subtract(allowanceRai[src][msg.sender], raiAmount);
         }
-        _balances[src] = subtract(_balances[src], amount);
-        _balances[dst] = addition(_balances[dst], amount);
+        balanceOfRai[src] = subtract(balanceOfRai[src], amount);
+        balanceOfRai[dst] = addition(balanceOfRai[dst], amount);
         emit Transfer(src, dst, amount);
         return true;
     }
@@ -158,7 +158,7 @@ contract Drai {
      */
     function _approve(address owner, address spender, uint256 amount) private {
         updateRedemptionPrice();
-        allowance[owner][spender] = amount == uint256(-1) ? amount : _draiToRai(amount); // avoid overflow on MAX_UINT approvals
+        allowanceRai[owner][spender] = amount == uint256(-1) ? amount : _draiToRai(amount); // avoid overflow on MAX_UINT approvals
         emit Approval(owner, spender, amount);
     }
 
@@ -230,8 +230,8 @@ contract Drai {
         // Update state and transfer tokens. Balances are stored internally at a 1:1 exchange rate with RAI, and
         // "true" dollar-pegged balances are computed on-demand in the `balanceOf()` and totalSupply()` methods.
         // This is why the `Transfer` event emits `draiAmount` but `amount` is used everywhere else
-        _balances[usr] = addition(_balances[usr], amount);
-        _totalSupply     = addition(_totalSupply, amount);
+        balanceOfRai[usr] = addition(balanceOfRai[usr], amount);
+        totalSupplyRai     = addition(totalSupplyRai, amount);
         raiToken.transferFrom(msg.sender, address(this), amount);
         emit Transfer(address(0), usr, draiAmount);
     }
@@ -245,7 +245,7 @@ contract Drai {
      */
     function redeemUnderlying(address src, address dst, uint256 amount) public {
         updateRedemptionPrice();
-        uint256 raiAmount = amount == uint256(-1) ? _balances[src] : amount;
+        uint256 raiAmount = amount == uint256(-1) ? balanceOfRai[src] : amount;
         _redeem(src, dst, raiAmount, _raiToDrai(raiAmount));
     }
 
@@ -274,15 +274,15 @@ contract Drai {
      */
     function _redeem(address src, address dst, uint256 raiAmount, uint256 draiAmount) internal {
         // Balance and allowance checks
-        require(_balances[src] >= raiAmount, "drai/insufficient-balance");
-        if (src != msg.sender && allowance[src][msg.sender] != uint256(-1)) {
-            require(allowance[src][msg.sender] >= raiAmount, "drai/insufficient-allowance");
-            allowance[src][msg.sender] = subtract(allowance[src][msg.sender], raiAmount);
+        require(balanceOfRai[src] >= raiAmount, "drai/insufficient-balance");
+        if (src != msg.sender && allowanceRai[src][msg.sender] != uint256(-1)) {
+            require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowanceRai");
+            allowanceRai[src][msg.sender] = subtract(allowanceRai[src][msg.sender], raiAmount);
         }
 
         // Update state and transfer tokens
-        _balances[src] = subtract(_balances[src], raiAmount);
-        _totalSupply    = subtract(_totalSupply, raiAmount);
+        balanceOfRai[src] = subtract(balanceOfRai[src], raiAmount);
+        totalSupplyRai    = subtract(totalSupplyRai, raiAmount);
         raiToken.transfer(dst, raiAmount);
         emit Transfer(src, address(0), draiAmount);
     }
@@ -294,15 +294,25 @@ contract Drai {
      * @param usr User whose balance to return
      */
     function balanceOf(address usr) public view returns(uint256) {
-        return rmultiply(_balances[usr], lastRedemptionPrice);
+        return rmultiply(balanceOfRai[usr], lastRedemptionPrice);
     }
 
     /**
      * @notice Returns total supply of Drai
      * @dev Calculated dynamically based on last known Rai redemption price
      */
-     function totalSupply() public view returns(uint256) {
-        return rmultiply(_totalSupply, lastRedemptionPrice);
+    function totalSupply() public view returns(uint256) {
+        return rmultiply(totalSupplyRai, lastRedemptionPrice);
+    }
+
+    /**
+     * @notice Returns allowance of `spender` to spend `owner`s Drai
+     * @param owner Drai holder
+     * @param spender Drai spender
+     */
+    function allowance(address owner, address spender) public view returns(uint256) {
+        uint256 raiAllowance = allowanceRai[owner][spender];
+        return raiAllowance == uint256(-1) ? raiAllowance : rmultiply(raiAllowance, lastRedemptionPrice);
     }
 
     /**
@@ -316,7 +326,7 @@ contract Drai {
     /**
      * @dev Helper method to convert a quantity of Rai to Drai, based on last known redemption price
      */
-     function _raiToDrai(uint256 amount) internal view returns(uint256) {
+    function _raiToDrai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
         return rmultiply(amount, lastRedemptionPrice); // ray * wad = wad, so no other unit conversions needed
     }
