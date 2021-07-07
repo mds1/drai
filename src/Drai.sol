@@ -17,8 +17,8 @@ interface OracleRelayerLike {
 
 contract Drai {
     // -- Data --
-    CoinLike public raiToken = CoinLike(0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919);
-    OracleRelayerLike public oracleRelayer = OracleRelayerLike(0x4ed9C0dCa0479bC64d8f4EB3007126D5791f7851);
+    CoinLike public constant raiToken = CoinLike(0x03ab458634910AaD20eF5f1C8ee96F1D6ac54919);
+    OracleRelayerLike public constant oracleRelayer = OracleRelayerLike(0x4ed9C0dCa0479bC64d8f4EB3007126D5791f7851);
 
     // Because RAI's OracleRelayer does not expose the last redemption price, we must caclulate it as
     // needed to avoid breaking conformity to ERC-20 standards. Doing this requires us to cache the
