@@ -134,7 +134,7 @@ contract Drai {
         uint256 raiAmount = amount == uint256(-1) ? balanceOfRai[src] : amount; // ensure no dust
         require(balanceOfRai[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowanceRai[src][msg.sender] != uint256(-1)) {
-            require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowanceRai");
+            require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowance");
             allowanceRai[src][msg.sender] = subtract(allowanceRai[src][msg.sender], raiAmount);
         }
         balanceOfRai[src] = subtract(balanceOfRai[src], draiAmount);
@@ -280,7 +280,7 @@ contract Drai {
         // Balance and allowance checks
         require(balanceOfRai[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowanceRai[src][msg.sender] != uint256(-1)) {
-            require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowanceRai");
+            require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowance");
             allowanceRai[src][msg.sender] = subtract(allowanceRai[src][msg.sender], raiAmount);
         }
 
