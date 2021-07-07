@@ -294,7 +294,7 @@ contract Drai {
      * @param usr User whose balance to return
      */
     function balanceOf(address usr) public view returns(uint256) {
-        return rmultiply(balanceOfRai[usr], lastRedemptionPrice);
+        return rmultiply(balanceOfRai[usr], computeRedemptionPrice());
     }
 
     /**
@@ -302,7 +302,7 @@ contract Drai {
      * @dev Calculated dynamically based on last known Rai redemption price
      */
     function totalSupply() public view returns(uint256) {
-        return rmultiply(totalSupplyRai, lastRedemptionPrice);
+        return rmultiply(totalSupplyRai, computeRedemptionPrice());
     }
 
     /**
@@ -312,7 +312,7 @@ contract Drai {
      */
     function allowance(address owner, address spender) public view returns(uint256) {
         uint256 raiAllowance = allowanceRai[owner][spender];
-        return raiAllowance == uint256(-1) ? raiAllowance : rmultiply(raiAllowance, lastRedemptionPrice);
+        return raiAllowance == uint256(-1) ? raiAllowance : rmultiply(raiAllowance, computeRedemptionPrice());
     }
 
     /**
@@ -320,7 +320,7 @@ contract Drai {
      */
     function _draiToRai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
-        return rdivide(amount, lastRedemptionPrice); // wad / ray = wad, so no other unit conversions needed
+        return rdivide(amount, computeRedemptionPrice()); // wad / ray = wad, so no other unit conversions needed
     }
 
     /**
@@ -328,11 +328,11 @@ contract Drai {
      */
     function _raiToDrai(uint256 amount) internal view returns(uint256) {
         // Does not update redemption price before converting
-        return rmultiply(amount, lastRedemptionPrice); // ray * wad = wad, so no other unit conversions needed
+        return rmultiply(amount, computeRedemptionPrice()); // wad * ray = wad, so no other unit conversions needed
     }
 
     /**
-     * @notice Computes the current redemption price
+     * @notice Computes an approximate current redemption price based on cached data
      * @dev RAI's OracleRelayer does not have a view method to read what the current redemption
      * price is -- you must send a transaction which updates the state to get the latest price.
      * The redemption price is required by the `balanceOf()` and `totalSupply()` methods, which

@@ -431,6 +431,7 @@ contract TokenTest is DraiTest {
         assertEq(drai.balanceOf(self), initialDraiBalance);
         // Poke and check new value
         drai.updateRedemptionPrice();
+        if (isRedemptionPriceZero()) return;
         assertEq(drai.balanceOf(self), redemptionPrice * initialDraiBalance / RAY);
     }
 
@@ -443,6 +444,7 @@ contract TokenTest is DraiTest {
         assertEq(drai.totalSupply(), initialDraiBalance);
         // Poke and check new value
         drai.updateRedemptionPrice();
+        if (isRedemptionPriceZero()) return;
         assertEq(drai.totalSupply(), redemptionPrice * initialDraiBalance / RAY);
     }
 
