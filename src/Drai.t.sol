@@ -8,6 +8,8 @@ interface Hevm {
     function warp(uint256 x) external view;
     // Sets slot `loc` of contract `c` to value `val`
     function store(address c, bytes32 loc, bytes32 val) external view;
+    // Reads the slot `loc` of contract `c`
+    function load(address c, bytes32 loc) external view returns (bytes32 val);
     // Generates address derived from private key `sk`
     function addr(uint256 sk) external view returns (address _addr);
     // Signs `digest` with private key `sk` (WARNING: this is insecure as it leaks the private key)
@@ -82,7 +84,7 @@ contract TokenTest is DraiTest {
 
     // Parameters for this contract
     address self = address(this);
-    uint256 constant initialDraiBalance = 20 ether; // to be minted in setUp at 1:1 ratio
+    uint256 constant initialDraiBalance = uint128(-1) / 2; // to be minted in setUp at 1:1 ratio
     uint256 initialRaiBalance; // set after minting Drai
 
     // Parameters for `permit` tests
@@ -99,9 +101,11 @@ contract TokenTest is DraiTest {
     bytes32 redemptionPriceUpdateTimeSlot = bytes32(uint256(6));
 
     // --- Helpers ---
-    function setRaiBalance(address dst, uint256 wad) public view {
+    // Rai balances and redemption price parameters are uint128 to avoid overflow when fuzzing
+
+    function setRaiBalance(address dst, uint256 amount) public view {
         bytes32 slot = keccak256(abi.encode(dst, 6)); // get storage slot
-        hevm.store(address(rai), slot, bytes32(wad)); // set balance of `dst` to `wad` RAI
+        hevm.store(address(rai), slot, bytes32(amount)); // set balance of `dst` to `amount` RAI
     }
 
     function setRaiRedemptionPrice(uint256 price) public view {
@@ -110,6 +114,12 @@ contract TokenTest is DraiTest {
         hevm.store(address(oracleRelayer), redemptionPriceSlot, bytes32(price));
         hevm.store(address(oracleRelayer), redemptionRateSlot, bytes32(RAY));
         hevm.store(address(oracleRelayer), redemptionPriceUpdateTimeSlot, bytes32(now));
+    }
+
+    function isRedemptionPriceZero() public view returns (bool) {
+        return drai.lastRedemptionPrice() == 0 
+            || drai.computeRedemptionPrice() == 0
+            || uint256(hevm.load(address(oracleRelayer), redemptionPriceSlot)) == 0;
     }
 
     function setRaiRedemptionParams(uint256 price, uint256 rate, uint256 timestamp) public view {
@@ -150,9 +160,10 @@ contract TokenTest is DraiTest {
         super.setUp();
         hevm.warp(deadline - 52 weeks); // don't warp to deadline to allow room to warp more before permit deadline
 
-        // Give us 100 RAI to work with
-        setRaiBalance(address(this), 100 ether);
-        assertEq(rai.balanceOf(address(this)), 100 ether);
+        // Give us 2^128-1 RAI to work with
+        uint128 balanceToSet = uint128(-1);
+        setRaiBalance(address(this), balanceToSet);
+        assertEq(rai.balanceOf(address(this)), balanceToSet);
         rai.approve(address(drai), uint256(-1));
         assertEq(rai.allowance(address(this), address(drai)), uint256(-1));
 
@@ -160,7 +171,7 @@ contract TokenTest is DraiTest {
         setRaiRedemptionPrice(initialRedemptionPrice);
         assertEq(oracleRelayer.redemptionPrice(), RAY);
 
-        // Use our RAI balance to mint DRAI
+        // Use half our RAI balance to mint DRAI
         drai.mint(self, initialDraiBalance);
         initialRaiBalance = rai.balanceOf(self);
 
@@ -227,18 +238,22 @@ contract TokenTest is DraiTest {
         DraiUser(user1).doApprove(self, 20);
         drai.transferFrom(user1, self, 21);
     }
+
     function testTransferFromSelf() public {
         drai.transferFrom(self, user1, 50);
         assertEq(drai.balanceOf(user1), 50);
     }
+
     function testFailTransferFromSelfNonArbitrarySize() public {
         // you shouldn't be able to evade balance checks by transferring to yourself
         drai.transferFrom(self, self, drai.balanceOf(self) + 1);
     }
+
     function testFailUntrustedTransferFrom() public {
         assertEq(drai.allowance(self, user2), 0);
         DraiUser(user1).doTransferFrom(self, user2, 200);
     }
+
     function testTrusting() public {
         assertEq(drai.allowance(self, user2), 0);
         drai.approve(user2, uint256(-1));
@@ -246,11 +261,13 @@ contract TokenTest is DraiTest {
         drai.approve(user2, 0);
         assertEq(drai.allowance(self, user2), 0);
     }
+
     function testTrustedTransferFrom() public {
         drai.approve(user1, uint256(-1));
         DraiUser(user1).doTransferFrom(self, user2, 200);
         assertEq(drai.balanceOf(user2), 200);
     }
+
     function testApproveWillModifyAllowance() public {
         assertEq(drai.allowance(self, user1), 0);
         assertEq(drai.balanceOf(user1), 0);
@@ -260,6 +277,7 @@ contract TokenTest is DraiTest {
         assertEq(drai.balanceOf(user1), 500);
         assertEq(drai.allowance(self, user1), 500);
     }
+
     function testApproveWillNotModifyAllowance() public {
         assertEq(drai.allowance(self, user1), 0);
         assertEq(drai.balanceOf(user1), 0);
@@ -275,6 +293,7 @@ contract TokenTest is DraiTest {
         assertEq(drai.allowance(owner, spender), 0);
         assertEq(drai.nonces(owner), 0);
     }
+
     function testTypehash() public {
         assertEq(drai.PERMIT_TYPEHASH(), 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9);
     }
@@ -290,23 +309,24 @@ contract TokenTest is DraiTest {
         assertEq(drai.nonces(owner), 1);
     }
 
-    function testFailPermitBadNonce() public {
-        // Test for failure when using the wrong nonce value on the digest
-        bytes32 digest = getDigest(owner, spender, value, 123, deadline);
+    function testFailPermitBadNonce(uint256 _nonce) public {
+        // Test for failure when using the wrong _nonce value on the digest
+        if (_nonce == 0) _nonce += 1; // nonce should be zero, so bump it to 1 if we get zero
+        bytes32 digest = getDigest(owner, spender, value, _nonce, deadline);
         (uint8 v, bytes32 r, bytes32 s) = hevm.sign(skOwner, digest);
         drai.permit(owner, spender, value, deadline, v, r, s);
     }
 
-    function testFailPermitBadDeadline() public {
+    function testFailPermitBadDeadline(uint128 extraTime) public {
         // Test for failure when passing in the wrong deadline to permit
         (uint8 v, bytes32 r, bytes32 s) = getValidPermitSignature();
-        drai.permit(owner, spender, value, deadline + 1 hours, v, r, s);
+        drai.permit(owner, spender, value, deadline + extraTime + 1, v, r, s); // add 1 to ensure deadline + extraTime > deadline
     }
 
-    function testFailPermitPastDeadline() public {
+    function testFailPermitPastDeadline(uint128 extraTime) public {
         // Test for failure when waiting until after the deadline to submit the permit
         (uint8 v, bytes32 r, bytes32 s) = getValidPermitSignature();
-        hevm.warp(deadline + 1 weeks);
+        hevm.warp(deadline + extraTime + 1); // add 1 to ensure we're past deadline when extraTime = 0
         drai.permit(owner, spender, value, deadline, v, r, s);
     }
 
@@ -327,118 +347,125 @@ contract TokenTest is DraiTest {
         assertEq(drai.lastRedemptionPriceUpdateTime(), now);
     }
 
-    function testRedemptionPriceUpdateOnTransfer() public {
+    function testRedemptionPriceUpdateOnTransfer(uint128 redemptionPrice, uint128 redemptionRate, uint128 extraTime) public {
         // Ensure cached redemption data is updated on transfer
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(123, 456, newTime);
+        uint256 newTime = now + extraTime; // add time to `now` to avoid going into the past
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
+        if (isRedemptionPriceZero()) return; // avoid divide by zero conditions
         drai.transfer(self, 0);
-        assertRedemptionParamsNew(123, 456, newTime);
+        assertRedemptionParamsNew(redemptionPrice, redemptionRate, newTime);
     }
 
-    function testRedemptionPriceUpdateOnTransferFrom() public {
+    function testRedemptionPriceUpdateOnTransferFrom(uint128 redemptionPrice, uint128 redemptionRate, uint128 extraTime) public {
         // Ensure cached redemption data is updated on transferFrom
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(123, 456, newTime);
+        uint256 newTime = now + extraTime;
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
+        if (isRedemptionPriceZero()) return;
         drai.transferFrom(self, self, 0);
-        assertRedemptionParamsNew(123, 456, newTime);
+        assertRedemptionParamsNew(redemptionPrice, redemptionRate, newTime);
     }
 
-    function testRedemptionPriceUpdateOnApprove() public {
+    function testRedemptionPriceUpdateOnApprove(uint128 redemptionPrice, uint128 redemptionRate, uint128 extraTime) public {
         // Ensure cached redemption data is updated on approve
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(123, 456, newTime);
+        uint256 newTime = now + extraTime;
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
+        if (isRedemptionPriceZero()) return;
         drai.approve(self, 0);
-        assertRedemptionParamsNew(123, 456, newTime);
+        assertRedemptionParamsNew(redemptionPrice, redemptionRate, newTime);
     }
 
-    function testRedemptionPriceUpdateOnPermit() public {
+    function testRedemptionPriceUpdateOnPermit(uint128 redemptionPrice, uint128 redemptionRate, uint24 extraTime) public {
         // Ensure cached redemption data is updated on permit
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(123, 456, newTime);
+        uint256 newTime = now + extraTime; // smaller extra time value so permit does not expire
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
         (uint8 v, bytes32 r, bytes32 s) = getValidPermitSignature();
+        if (isRedemptionPriceZero()) return;
         drai.permit(owner, spender, value, deadline, v, r, s);
-        assertRedemptionParamsNew(123, 456, newTime);
+        assertRedemptionParamsNew(redemptionPrice, redemptionRate, newTime);
     }
 
-    function testRedemptionPriceUpdateOnMint() public {
+    function testRedemptionPriceUpdateOnMint(uint128 redemptionPrice, uint128 redemptionRate, uint128 extraTime) public {
         // Ensure cached redemption data is updated on mint
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(123, 456, newTime);
+        uint256 newTime = now + extraTime;
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
+        if (isRedemptionPriceZero()) return;
         drai.mint(self, 0);
-        assertRedemptionParamsNew(123, 456, newTime);
+        assertRedemptionParamsNew(redemptionPrice, redemptionRate, newTime);
     }
 
-    function testRedemptionPriceUpdateOnRedeem() public {
+    function testRedemptionPriceUpdateOnRedeem(uint128 redemptionPrice, uint128 redemptionRate, uint128 extraTime) public {
         // Ensure cached redemption data is updated on redeem
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(123, 456, newTime);
+        uint256 newTime = now + extraTime;
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
+        if (isRedemptionPriceZero()) return;
         drai.redeem(self, self, 0);
-        assertRedemptionParamsNew(123, 456, newTime);
+        assertRedemptionParamsNew(redemptionPrice, redemptionRate, newTime);
     }
 
-    function testComputeRedemptionPrice() public {
+    function testComputeRedemptionPrice(uint128 redemptionPrice, uint128 redemptionRate, uint128 extraTime) public {
         // Ensure DRAI's initial value matches OracleRelayer's value
         assertEq(drai.computeRedemptionPrice(), RAY);
         assertEq(drai.computeRedemptionPrice(), oracleRelayer.redemptionPrice());
 
         // Change redemption price and ensure DRAI still matches OracleRelayer
-        setRaiRedemptionPrice(2 * RAY);
+        setRaiRedemptionPrice(redemptionPrice);
         drai.updateRedemptionPrice(); // poke DRAI to update it's cached values
-        assertEq(drai.computeRedemptionPrice(), 2 * RAY);
+        if (isRedemptionPriceZero()) return;
+        assertEq(drai.computeRedemptionPrice(), redemptionPrice);
         assertEq(drai.computeRedemptionPrice(), oracleRelayer.redemptionPrice());
 
         // Change all 3 parameters and ensure DRAI still matches OracleRelayer
-        uint256 newTime = now + 1 weeks;
-        setRaiRedemptionParams(3 * RAY, RAY + 123123123, newTime);
+        uint256 newTime = now + extraTime;
+        setRaiRedemptionParams(redemptionPrice, redemptionRate, newTime);
         drai.updateRedemptionPrice(); // poke DRAI to update it's cached values
+        if (isRedemptionPriceZero()) return;
         assertEq(drai.computeRedemptionPrice(), oracleRelayer.redemptionPrice());
     }
 
-    function testBalanceOf() public {
+    function testBalanceOf(uint128 redemptionPrice) public {
         // Initial check minted at redemption price of 1
         assertEq(drai.balanceOf(self), initialDraiBalance);
         // Update redemption price
-        setRaiRedemptionPrice(2 * RAY);
+        setRaiRedemptionPrice(redemptionPrice);
         // Still should have same amount of DRAI until poked
         assertEq(drai.balanceOf(self), initialDraiBalance);
         // Poke and check new value
         drai.updateRedemptionPrice();
-        assertEq(drai.balanceOf(self), 2 * initialDraiBalance);
+        assertEq(drai.balanceOf(self), redemptionPrice * initialDraiBalance / RAY);
     }
 
-    function testTotalSupply() public {
+    function testTotalSupply(uint128 redemptionPrice) public {
         // Initial check minted at redemption price of 1
         assertEq(drai.totalSupply(), initialDraiBalance);
         // Update redemption price
-        setRaiRedemptionPrice(2 * RAY);
+        setRaiRedemptionPrice(redemptionPrice);
         // Still should have same amount of DRAI until poked
         assertEq(drai.totalSupply(), initialDraiBalance);
         // Poke and check new value
         drai.updateRedemptionPrice();
-        assertEq(drai.totalSupply(), 2 * initialDraiBalance);
+        assertEq(drai.totalSupply(), redemptionPrice * initialDraiBalance / RAY);
     }
 
-    function testMintSelf() public {
+    function testMintSelf(uint128 redemptionPrice, uint64 mintAmount) public {
         // Update redemption price
-        setRaiRedemptionPrice(RAY * 2);
+        setRaiRedemptionPrice(redemptionPrice);
         // Mint
-        uint256 mintAmount = 30 ether;
         drai.mint(self, mintAmount);
         assertEq(rai.balanceOf(self), initialRaiBalance - mintAmount);
-        assertEq(drai.balanceOf(self), 2 * initialDraiBalance + 2 * mintAmount);
+        assertEq(drai.balanceOf(self), redemptionPrice * (initialDraiBalance + mintAmount) / RAY);
     }
 
-    function testMintOther() public {
+    function testMintOther(uint128 redemptionPrice, uint64 mintAmount) public {
         // Update redemption price
-        setRaiRedemptionPrice(RAY * 3456);
+        setRaiRedemptionPrice(redemptionPrice);
         // Mint
-        uint256 mintAmount = 30 ether;
         address to = address(1); // this user has no initial balances
         drai.mint(to, mintAmount);
         assertEq(rai.balanceOf(self), initialRaiBalance - mintAmount);
-        assertEq(drai.balanceOf(to), 3456 * mintAmount);
+        assertEq(drai.balanceOf(to), uint256(redemptionPrice) * mintAmount / RAY); // need a uint256 in here to avoid overflow
     }
 
+    // TODO fuzz test redeem tests -- rounding errors somewhere?
     function testRedeem() public {
         // Update redemption price
         setRaiRedemptionPrice(RAY / 2);
@@ -476,7 +503,7 @@ contract TokenTest is DraiTest {
         // Redeem
         uint256 redeemAmount = uint256(-1); // in DRAI
         drai.redeem(self, self, redeemAmount);
-        assertEq(rai.balanceOf(self), 100 ether);
+        assertEq(rai.balanceOf(self), uint128(-1)); // balanceToSet = uint128(-1)
         assertEq(drai.balanceOf(self), 0);
     }
 
@@ -486,18 +513,18 @@ contract TokenTest is DraiTest {
         // Redeem
         uint256 redeemAmount = uint256(-1); // in RAI
         drai.redeemUnderlying(self, self, redeemAmount);
-        assertEq(rai.balanceOf(self), 100 ether);
+        assertEq(rai.balanceOf(self), uint128(-1)); // balanceToSet = uint128(-1)
         assertEq(drai.balanceOf(self), 0);
     }
 
     function testFailRedeemInsufficientBalance() public {
         // redeem fails with insufficient-balance
-        drai.redeem(self, self, 500 ether);
+        drai.redeem(self, self, uint128(-1));
     }
 
     function testFailRedeemUnderlyingInsufficientBalance() public {
         // redeemUnderlying fails with insufficient-balance
-        drai.redeemUnderlying(self, self, 500 ether);
+        drai.redeemUnderlying(self, self, uint128(-1));
     }
 
     function testFailRedeemInsufficientAllowance() public {
