@@ -459,6 +459,7 @@ contract TokenTest is DraiTest {
         setRaiRedemptionPrice(redemptionPrice);
         // Mint
         drai.mint(self, mintAmount);
+        if (isRedemptionPriceZero()) return;
         assertEq(rai.balanceOf(self), initialRaiBalance - mintAmount);
         assertEq(drai.balanceOf(self), redemptionPrice * (initialDraiBalance + mintAmount) / RAY);
     }
@@ -469,6 +470,7 @@ contract TokenTest is DraiTest {
         // Mint
         address to = address(1); // this user has no initial balances
         drai.mint(to, mintAmount);
+        if (isRedemptionPriceZero()) return;
         assertEq(rai.balanceOf(self), initialRaiBalance - mintAmount);
         assertEq(drai.balanceOf(to), uint256(redemptionPrice) * mintAmount / RAY); // need a uint256 in here to avoid overflow
     }
