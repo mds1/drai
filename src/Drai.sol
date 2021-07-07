@@ -113,6 +113,7 @@ contract Drai {
     // --- Token ---
     /*
     * @notice Transfer coins to another address
+    * @dev Use MAX_UINT256 as `amount` to transfer all tokens
     * @param dst The address to transfer coins to
     * @param amount The amount of coins to transfer, denominated in Drai
     */
@@ -122,21 +123,23 @@ contract Drai {
 
     /*
      * @notice Transfer coins from a source address to a destination address (if allowed)
+     * @dev Use MAX_UINT256 as `amount` to transfer all tokens
      * @param src The address from which to transfer coins
      * @param dst The address that will receive the coins
      * @param amount The amount of coins to transfer, specified in Drai
      */
     function transferFrom(address src, address dst, uint256 amount) public returns (bool) {
         updateRedemptionPrice();
-        uint256 raiAmount = _draiToRai(amount);
+        uint256 draiAmount = amount == uint256(-1) ? balanceOf(src) : amount;
+        uint256 raiAmount = amount == uint256(-1) ? balanceOfRai[src] : amount; // ensure no dust
         require(balanceOfRai[src] >= raiAmount, "drai/insufficient-balance");
         if (src != msg.sender && allowanceRai[src][msg.sender] != uint256(-1)) {
             require(allowanceRai[src][msg.sender] >= raiAmount, "drai/insufficient-allowanceRai");
             allowanceRai[src][msg.sender] = subtract(allowanceRai[src][msg.sender], raiAmount);
         }
-        balanceOfRai[src] = subtract(balanceOfRai[src], amount);
-        balanceOfRai[dst] = addition(balanceOfRai[dst], amount);
-        emit Transfer(src, dst, amount);
+        balanceOfRai[src] = subtract(balanceOfRai[src], draiAmount);
+        balanceOfRai[dst] = addition(balanceOfRai[dst], draiAmount);
+        emit Transfer(src, dst, draiAmount);
         return true;
     }
 
@@ -259,7 +262,8 @@ contract Drai {
     function redeem(address src, address dst, uint256 amount) public {
         updateRedemptionPrice();
         uint256 draiAmount = amount == uint256(-1) ? balanceOf(src) : amount;
-        _redeem(src, dst, _draiToRai(draiAmount), draiAmount);
+        uint256 raiAmount = amount == uint256(-1) ? balanceOfRai[src] : _draiToRai(draiAmount); // ensure no dust
+        _redeem(src, dst, raiAmount, draiAmount);
     }
 
     /*

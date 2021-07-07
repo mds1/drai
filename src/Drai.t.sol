@@ -422,6 +422,12 @@ contract TokenTest is DraiTest {
         assertEq(drai.computeRedemptionPrice(), oracleRelayer.redemptionPrice());
     }
 
+    function testTransferAll() public {
+        drai.transfer(address(8), uint256(-1));
+        assertEq(drai.balanceOf(address(8)), initialDraiBalance);
+        assertEq(drai.balanceOf(self), 0);
+    }
+
     function testBalanceOf(uint128 redemptionPrice) public {
         // Initial check minted at redemption price of 1
         assertEq(drai.balanceOf(self), initialDraiBalance);
