@@ -551,4 +551,12 @@ contract TokenTest is DraiTest {
         rai.transfer(user, rai.balanceOf(self));
         drai.redeem(user, self, 1);
     }
+
+    function proveTransfer(address user, uint64 amount) public {
+        uint256 preBalance = drai.balanceOf(user);
+        drai.transfer(user, amount);
+        uint256 postBalance = drai.balanceOf(user);
+        uint256 expected = user == address(this) ? 0 : amount; // transfer to self results in no balance change
+        assertEq(expected, postBalance - preBalance);
+    }
 }
